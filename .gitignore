@@ -1,0 +1,5 @@
+# Inside .gitignore
+data/
+venv/
+*.bin
+*.npy
