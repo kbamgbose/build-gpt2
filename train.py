@@ -350,8 +350,6 @@ for step in range(max_steps):
     if master_process:
         print(f"step {step:4d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f} ms | tok/sec: {tokens_per_sec:.2f}")
 
-if ddp:
-    destroy_process_group()
 
 import sys; sys.exit(0)
 
