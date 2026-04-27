@@ -219,6 +219,9 @@ class GPT(nn.Module):
 # -----------------------------------------------------------------------------------------------------------------
 
 import tiktoken
+import numpy as np
+
+enc = tiktoken.get_encoding('gpt2')
 
 def load_tokens(filename):
     npt = np.load(filename)
@@ -226,7 +229,7 @@ def load_tokens(filename):
     return ptt
 
 class DataLoaderLite:
-    def __init__(self, B, T, process_rank, num_processes):
+    def __init__(self, B, T, process_rank, num_processes, split):
         self.B = B
         self.T = T
         self.process_rank = process_rank
@@ -235,7 +238,7 @@ class DataLoaderLite:
 
         data_root = "edu_fineweb10B"
         shards = os.listdir(data_root)
-        shards = [s for s ins hards if split in s]
+        shards = [s for s in shards if split in s]
         shards = sorted(shards)
         shards = [os.path.join(data_root, s) for s in shards]
         self.shards = shards
@@ -275,7 +278,8 @@ if ddp:
     ddp_world_size = int(os.environ['WORLD_SIZE'])
     device = f'cuda:{ddp_local_rank}'
     torch.cuda.set_device(device)
-    master_process = ddp_rank == 0 
+    master_process = ddp_rank == 0
+    device_type = "cuda"
 else:
     ddp_rank = 0
     ddp_local_rank = 0
@@ -288,6 +292,8 @@ else:
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         device = "mps"
     print(f"using device: {device}")
+
+device_type = "cuda" if device.startswith("cuda") else "cpu"
 
 torch.manual_seed(1337)
 if torch.cuda.is_available():
@@ -349,7 +355,7 @@ for step in range(max_steps):
             for _ in range(val_loss_steps):
                 x, y  = val_loader.next_batch()
                 x, y = x.to(device), y.to(device)
-                with torch.autocast(device_type=device, dtype=torch.bfloat16)
+                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                     logits, loss = model(x, y)
                 loss = loss / val_loss_steps
                 val_loss_accum += loss.detach()
@@ -365,7 +371,7 @@ for step in range(max_steps):
             max_length = 32
             tokens = enc.encode("Hello, I'm a language model,")
             tokens = torch.tensor(tokens, dtype=torch.long)
-            tokens = tokens.unsqeueez(0).repeat(num_return_sequences, 1)
+            tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
             xgen = tokens.to(device)
             sample_rng = torch.Generator(device=device)
             sample_rng.manual_seed(42 + ddp_rank)
@@ -391,7 +397,7 @@ for step in range(max_steps):
     for micro_step in range(grad_accum_steps):
         x, y = train_loader.next_batch()
         x, y = x.to(device), y.to(device)
-        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
             logits, loss = model(x, y)
         loss = loss / grad_accum_steps
         loss_accum += loss.detach()
