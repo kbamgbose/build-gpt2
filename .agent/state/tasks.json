@@ -1,0 +1,74 @@
+{
+  "tasks": [
+    {
+      "task_id": "FM-01",
+      "goal": "Isolate and quantify six transformer failure modes in a standalone experiment script",
+      "files": ["experiments/failure_modes.py"],
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Script runs to completion with exit code 0",
+        "All 6 experiment labels printed",
+        "BUG 1: leaked=True, max_diff > 0",
+        "BUG 2: row sum deviation > 0.1",
+        "BUG 3: unscaled entropy < scaled entropy",
+        "BUG 4: RuntimeError raised and caught",
+        "BUG 5: loss diverges over 10 steps",
+        "BUG 6: grad norm ratio reported"
+      ],
+      "tests_required": false,
+      "risk_level": "low",
+      "rollback_plan": "delete experiments/failure_modes.py",
+      "status": "completed"
+    },
+    {
+      "task_id": "FM-02",
+      "goal": "Add 4 pytest tests proving the 4 architectural failure modes are detectable",
+      "files": ["tests/test_failure_modes.py"],
+      "dependencies": ["FM-01"],
+      "acceptance_criteria": [
+        "test_no_causal_mask_leaks_future: asserts leaked=True for NoCausalMask",
+        "test_softmax_before_mask_row_sums: asserts deviation > 0.1 for SoftmaxBeforeMask",
+        "test_no_scaling_reduces_entropy: asserts unscaled entropy < scaled entropy",
+        "test_wrong_transpose_raises: asserts RuntimeError for WrongTranspose",
+        "All 4 tests pass",
+        "No production code modified"
+      ],
+      "tests_required": true,
+      "risk_level": "low",
+      "rollback_plan": "delete tests/test_failure_modes.py",
+      "status": "pending"
+    },
+    {
+      "task_id": "FM-03",
+      "goal": "Document all 6 failure modes with real numbers from FM-01 output",
+      "files": ["docs/failure_modes.md"],
+      "dependencies": ["FM-01"],
+      "acceptance_criteria": [
+        "All 6 failure modes documented",
+        "Real numbers from FM-01 output used (not placeholder values)",
+        "Each entry: symptom, root cause, detection method, fix",
+        "Training dynamics bugs (BUG 5, BUG 6) included with loss curve data"
+      ],
+      "tests_required": false,
+      "risk_level": "low",
+      "rollback_plan": "delete docs/failure_modes.md",
+      "status": "pending"
+    },
+    {
+      "task_id": "FM-04",
+      "goal": "Deduplicate inline model definitions in profiling scripts by importing from model.py",
+      "files": ["profiling/scaling_experiment.py", "profiling/block_size_experiment.py"],
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Both scripts import GPT and GPTConfig from model.py",
+        "No inline Block/MLP/GPT class definitions remain in profiling scripts",
+        "Scripts produce identical output before and after refactor",
+        "No changes to model.py"
+      ],
+      "tests_required": false,
+      "risk_level": "medium",
+      "rollback_plan": "git revert the commit",
+      "status": "pending"
+    }
+  ]
+}
