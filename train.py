@@ -345,8 +345,7 @@ def load_checkpoint(path):
     optimizer.load_state_dict(ckpt['optimizer'])
     train_loader.current_shard    = ckpt.get('loader_shard', 0)
     train_loader.current_position = ckpt.get('loader_pos', 0)
-    train_loader.tokens = train_loader._load_tokens(
-        train_loader.shards[train_loader.current_shard])
+    train_loader.tokens = load_tokens(train_loader.shards[train_loader.current_shard])
     return ckpt['step'], ckpt['loss']
 
 # ── resume from checkpoint if one exists ──────────────────────────────────────
