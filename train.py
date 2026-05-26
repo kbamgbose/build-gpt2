@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+import glob
+import json
 import math
 import torch
 import torch.nn as nn
@@ -10,6 +12,15 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 import os
 from attention import CausalSelfAttention
+
+try:
+    from training_reliability.cost_tracker import CostTracker
+    from training_reliability.loss_rate import check_loss_rate
+    from training_reliability.grad_norm import check_grad_norm
+    from training_reliability.anomaly import check_anomaly
+    MONITORS_AVAILABLE = True
+except ImportError:
+    MONITORS_AVAILABLE = False
 
 class MLP(nn.Module):
 
@@ -300,10 +311,66 @@ def get_lr(it):
     return min_lr + coeff * (max_lr - min_lr)
 
 #optimizer
-# optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8) 
 optimizer = raw_model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, device=device)
 
-for step in range(max_steps):
+# ── checkpoint helpers ────────────────────────────────────────────────────────
+CHECKPOINT_DIR      = os.environ.get('CHECKPOINT_DIR', 'checkpoints')
+CHECKPOINT_INTERVAL = int(os.environ.get('CHECKPOINT_INTERVAL', '500'))
+MAX_CHECKPOINTS     = int(os.environ.get('MAX_CHECKPOINTS', '5'))
+
+def save_checkpoint(step, loss_val):
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    path = os.path.join(CHECKPOINT_DIR, f"ckpt_{step:05d}.pt")
+    torch.save({
+        'step':      step,
+        'model':     raw_model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'loss':      loss_val,
+        'config':    raw_model.config,
+        'loader_shard': train_loader.current_shard,
+        'loader_pos':   train_loader.current_position,
+    }, path)
+    existing = sorted(glob.glob(os.path.join(CHECKPOINT_DIR, 'ckpt_*.pt')))
+    for old in existing[:-MAX_CHECKPOINTS]:
+        os.remove(old)
+    return path
+
+def latest_checkpoint():
+    ckpts = sorted(glob.glob(os.path.join(CHECKPOINT_DIR, 'ckpt_*.pt')))
+    return ckpts[-1] if ckpts else None
+
+def load_checkpoint(path):
+    ckpt = torch.load(path, map_location=device)
+    raw_model.load_state_dict(ckpt['model'])
+    optimizer.load_state_dict(ckpt['optimizer'])
+    train_loader.current_shard    = ckpt.get('loader_shard', 0)
+    train_loader.current_position = ckpt.get('loader_pos', 0)
+    train_loader.tokens = train_loader._load_tokens(
+        train_loader.shards[train_loader.current_shard])
+    return ckpt['step'], ckpt['loss']
+
+# ── resume from checkpoint if one exists ──────────────────────────────────────
+start_step = 0
+resume_ckpt = latest_checkpoint()
+if resume_ckpt and master_process:
+    start_step, _ = load_checkpoint(resume_ckpt)
+    if ddp:
+        dist.barrier()
+    print(f"Resumed from {resume_ckpt} at step {start_step}")
+elif resume_ckpt and ddp:
+    dist.barrier()
+
+# ── cost tracker + monitor state ──────────────────────────────────────────────
+if MONITORS_AVAILABLE:
+    tracker = CostTracker(
+        raw_model, B, T, grad_accum_steps,
+        num_gpus=ddp_world_size,
+        gpu_cost_per_hr=float(os.environ.get('GPU_COST_PER_HR', '2.50')),
+    )
+loss_history  = []
+rollback_count = 0
+
+for step in range(start_step, max_steps):
     t0 = time.time()
 
     # evals
@@ -367,28 +434,72 @@ for step in range(max_steps):
         loss.backward()
     if ddp:
         dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
+
+    # ── NaN / explosion rollback ──────────────────────────────────────────────
+    if not torch.isfinite(loss_accum):
+        rollback_count += 1
+        ckpt = latest_checkpoint()
+        if ckpt and master_process:
+            rolled_back_to, _ = load_checkpoint(ckpt)
+            for pg in optimizer.param_groups:
+                pg['lr'] *= 0.5
+            print(f"[FAULT] NaN at step {step} (rollback #{rollback_count}) "
+                  f"→ restored {ckpt}, LR halved to {optimizer.param_groups[0]['lr']:.2e}")
+        elif master_process:
+            print(f"[FAULT] NaN at step {step}, no checkpoint to roll back to — stopping.")
+            break
+        if ddp:
+            dist.barrier()
+        continue
+
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     lr = get_lr(step)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     optimizer.step()
-    torch.cuda.synchronize()
+    if device_type == "cuda":
+        torch.cuda.synchronize()
     t1 = time.time()
-    dt = t1 - t0 # time difference in seconds
+    dt = t1 - t0
+
+    # ── cost tracking ─────────────────────────────────────────────────────────
+    if MONITORS_AVAILABLE:
+        tracker.step(step=step, dt_seconds=dt)
+
+    # ── periodic checkpoint ───────────────────────────────────────────────────
+    if step > 0 and step % CHECKPOINT_INTERVAL == 0 and master_process:
+        path = save_checkpoint(step, loss_accum.item())
+        print(f"[CKPT] step {step} → {path}")
+
+    # ── live monitors ─────────────────────────────────────────────────────────
+    loss_history.append(loss_accum.item())
+    if MONITORS_AVAILABLE and master_process:
+        for w in [check_loss_rate(step, loss_history),
+                  check_grad_norm(step, norm.item()),
+                  check_anomaly(step, loss_accum.item(), norm.item(), 0.0)]:
+            if w:
+                print(f"WARN [step {w.step:4d}] {w.monitor}: {w.message} {w.values}")
+
     tokens_processed = train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size
     tokens_per_sec = tokens_processed / dt
     if master_process:
-        print(f"step {step:4d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f} ms | tok/sec: {tokens_per_sec:.2f}")
+        print(f"step {step:4d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | "
+              f"norm: {norm:.4f} | dt: {dt*1000:.2f} ms | tok/sec: {tokens_per_sec:.2f}")
 
 
 if master_process:
-    os.makedirs("checkpoints", exist_ok=True)
-    torch.save({
-        'model': raw_model.state_dict(),
-        'config': raw_model.config,
-        'step': max_steps,
-    }, "checkpoints/gpt2_fineweb.pt")
-    print("saved checkpoint to checkpoints/gpt2_fineweb.pt")
+    # final checkpoint
+    path = save_checkpoint(max_steps, loss_history[-1] if loss_history else 0.0)
+    print(f"Training complete. Final checkpoint: {path}")
+
+    # cost report
+    if MONITORS_AVAILABLE:
+        tracker.print_summary()
+        os.makedirs("logs", exist_ok=True)
+        tracker.save("logs/cost_report.json")
+
+    if rollback_count:
+        print(f"Total rollbacks during run: {rollback_count}")
 
 if ddp:
     destroy_process_group()
