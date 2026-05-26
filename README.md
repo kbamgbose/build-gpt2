@@ -29,7 +29,36 @@ Per-layer cost falls as depth increases. Kernel launch overhead is amortized acr
 
 ---
 
-## Failure modes
+## Training reliability
+
+Live monitors attached to the training loop that fire during a run, not after. No diagnosing by eyeballing loss curves.
+
+| Monitor | Condition | Warning |
+|---------|-----------|---------|
+| `loss_rate` | `loss_t / loss_{t-10} > 1.5` | loss spike |
+| `loss_rate` | `<1% decrease over 20 steps` | training stalled |
+| `grad_norm` | `grad_norm > 10.0` | gradient spike |
+| `grad_norm` | `grad_norm < 1e-6` | vanishing gradients |
+| `anomaly` | NaN or Inf in loss or grad_norm | numerical failure |
+| `anomaly` | `activation_std > 50.0` | activation explosion |
+| `anomaly` | `activation_std < 0.01` after step 5 | activation collapse |
+
+Each monitor returns a `Warning(step, monitor, message, values)` namedtuple. Warnings print live and write to `logs/<experiment>/warnings.jsonl`. `training_reliability/postmortem.py` reads those logs and generates structured failure reports.
+
+Four training failure experiments run against this monitor layer:
+
+| Experiment | Perturbation | Expected failure |
+|------------|--------------|-----------------|
+| `high_lr`  | lr=1.0 vs 3e-4 | gradient explosion → NaN |
+| `low_lr`   | lr=1e-7 vs 3e-4 | stalled training |
+| `bad_init` | init std=1.0 vs 0.02 | activation explosion |
+| `no_clip`  | clip=None vs 1.0 | gradient instability |
+
+Full analysis in `postmortems/training_instability.md`.
+
+---
+
+## Architecture failure modes
 
 Six bugs injected into a minimal model, each measured rather than described. Full writeup in `docs/failure_modes.md`.
 
@@ -98,8 +127,16 @@ All tests use `n_layer=2, n_head=2, n_embd=64`. Runs in under 2 seconds on CPU.
 attention.py              # CausalSelfAttention, manual masking, shape annotations
 model.py                  # GPTConfig, MLP, Block, GPT, no side effects
 train.py                  # DDP loop, 8 GPU, gradient accumulation, cosine LR
+train_baseline.py         # Baseline training loop for reliability experiments (5 modes)
 train_tiny.py             # Single-GPU smoke test on input.txt
 fineweb.py                # FineWeb-Edu 10B tokenization and sharding
+
+training_reliability/
+  __init__.py             # Warning namedtuple
+  loss_rate.py            # Loss spike and stall detection
+  grad_norm.py            # Gradient spike and vanishing gradient detection
+  anomaly.py              # NaN/Inf and activation std anomaly detection
+  postmortem.py           # Reads logs/, generates structured failure reports
 
 tests/
   test_transformer.py     # Invariant tests
@@ -113,6 +150,9 @@ profiling/
   scaling_experiment.py   # Context length and width scaling
   block_size_experiment.py# Depth scaling, ms/layer
   edge_cases.py           # Long sequences, dtype stability, large inputs
+
+postmortems/
+  training_instability.md # Per-failure analysis: what broke, how it was caught, why
 
 docs/
   attention_walkthrough.md        # 8-step derivation of causal self-attention
@@ -130,8 +170,20 @@ pip install -r requirements.txt
 # Correctness tests
 python -m pytest tests/ -v
 
-# Failure mode experiments (~11s on CPU)
+# Architecture failure mode experiments (~11s on CPU)
 python experiments/failure_modes.py
+
+# Baseline training run (control — should converge cleanly)
+python train_baseline.py baseline
+
+# Training failure experiments (run each independently)
+python train_baseline.py high_lr
+python train_baseline.py low_lr
+python train_baseline.py bad_init
+python train_baseline.py no_clip
+
+# Generate structured failure reports from logs/
+python training_reliability/postmortem.py
 
 # Single-GPU smoke test
 python train_tiny.py
