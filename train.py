@@ -290,8 +290,10 @@ torch.set_float32_matmul_precision('high')
 model = GPT(GPTConfig(vocab_size = 50304))
 model.to(device)
 if ddp:
-    model = DDP(model, device_ids=[ddp_local_rank]) 
+    model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model
+if device_type == "cuda":
+    model = torch.compile(model)
 
 max_lr =6e-4
 min_lr = max_lr * 0.1
@@ -405,7 +407,7 @@ for step in range(start_step, max_steps):
             while xgen.size(1) < max_length:
                 # forward the model to get the logits
                 with torch.no_grad():
-                    logits, loss = model(xgen) # (B, T, vocab_size)
+                    logits, loss = raw_model(xgen) # (B, T, vocab_size)
                     logits = logits[:, -1, :] # (B, vocab_size)
                     probs = F.softmax(logits, dim=-1)
                     topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
