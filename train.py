@@ -483,7 +483,7 @@ for step in range(start_step, max_steps):
     if MONITORS_AVAILABLE and master_process:
         for w in [check_loss_rate(step, loss_history),
                   check_grad_norm(step, norm.item()),
-                  check_anomaly(step, loss_accum.item(), norm.item(), 0.0)]:
+                  check_anomaly(step, loss_accum.item(), norm.item())]:
             if w:
                 print(f"WARN [step {w.step:4d}] {w.monitor}: {w.message} {w.values}")
 
@@ -492,6 +492,14 @@ for step in range(start_step, max_steps):
     if master_process:
         print(f"step {step:4d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | "
               f"norm: {norm:.4f} | dt: {dt*1000:.2f} ms | tok/sec: {tokens_per_sec:.2f}")
+        log_metrics({
+            'step':      step,
+            'loss':      loss_accum.item(),
+            'grad_norm': norm.item(),
+            'lr':        lr,
+            'dt_ms':     round(dt * 1000, 2),
+            'tok_per_sec': round(tokens_per_sec, 1),
+        })
 
 
 if master_process:
