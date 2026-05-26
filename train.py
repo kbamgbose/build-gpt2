@@ -319,6 +319,12 @@ optimizer = raw_model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4,
 CHECKPOINT_DIR      = os.environ.get('CHECKPOINT_DIR', 'checkpoints')
 CHECKPOINT_INTERVAL = int(os.environ.get('CHECKPOINT_INTERVAL', '500'))
 MAX_CHECKPOINTS     = int(os.environ.get('MAX_CHECKPOINTS', '5'))
+METRICS_PATH        = os.path.join('logs', 'metrics.jsonl')
+
+def log_metrics(record):
+    os.makedirs('logs', exist_ok=True)
+    with open(METRICS_PATH, 'a') as f:
+        f.write(json.dumps(record) + '\n')
 
 def save_checkpoint(step, loss_val):
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
