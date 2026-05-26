@@ -183,7 +183,10 @@ def main():
     warnings_path = os.path.join(LOG_DIR, 'warnings.jsonl')
     cost_path     = os.path.join(LOG_DIR, 'cost_report.json')
 
-    # clear stale logs from previous runs
+    # clear stale logs and checkpoints from previous runs
+    import shutil
+    shutil.rmtree(CKPT_DIR, ignore_errors=True)
+    os.makedirs(CKPT_DIR, exist_ok=True)
     for p in (metrics_path, warnings_path):
         if os.path.exists(p):
             os.remove(p)
