@@ -56,7 +56,7 @@ def compute_flops_per_step(model, B, T, grad_accum_steps):
 class CostTracker:
     def __init__(self, model, B, T, grad_accum_steps,
                  num_gpus=1, gpu_cost_per_hr=2.50):
-        self.flops_per_step   = compute_flops_per_step(model, B, T, grad_accum_steps)
+        self.flops_per_step   = compute_flops_per_step(model, B, T, grad_accum_steps) * num_gpus
         self.tokens_per_step  = B * T * grad_accum_steps * num_gpus
         self.num_gpus         = num_gpus
         self.gpu_cost_per_hr  = gpu_cost_per_hr   # total for all GPUs in the pod
