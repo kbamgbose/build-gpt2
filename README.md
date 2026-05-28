@@ -1,6 +1,6 @@
 # build-gpt2
 
-GPT-2 (124M) implemented from scratch in PyTorch. No library wrappers. Trained on FineWeb-Edu 10B across 8x A100 80GB with DDP.
+GPT-2 (124M) implemented from scratch in PyTorch. No library wrappers. Trained on FineWeb-Edu 10B with DDP across A100 SXM 80GB GPUs.
 
 The goal was not to reproduce the paper. It was to understand what breaks, why it breaks silently, and what the hardware actually does at scale.
 
@@ -150,8 +150,9 @@ All tests use `n_layer=2, n_head=2, n_embd=64`. Runs in under 2 seconds on CPU.
 ```
 attention.py              # CausalSelfAttention, manual masking, shape annotations
 model.py                  # GPTConfig, MLP, Block, GPT, no side effects
-train.py                  # DDP loop, 8 GPU, gradient accumulation, cosine LR
+train.py                  # DDP training loop, fault tolerance, cost tracking
 train_baseline.py         # Baseline training loop for reliability experiments (5 modes)
+train_fault_demo.py       # CPU-runnable fault tolerance demo (NaN inject + rollback)
 train_tiny.py             # Single-GPU smoke test on input.txt
 fineweb.py                # FineWeb-Edu 10B tokenization and sharding
 
@@ -160,14 +161,17 @@ training_reliability/
   loss_rate.py            # Loss spike and stall detection
   grad_norm.py            # Gradient spike and vanishing gradient detection
   anomaly.py              # NaN/Inf and activation std anomaly detection
+  cost_tracker.py         # FLOPs, tokens/sec, GPU cost per step
   postmortem.py           # Reads logs/, generates structured failure reports
 
 tests/
-  test_transformer.py     # Invariant tests
-  test_failure_modes.py   # Failure mode detection tests
+  test_transformer.py         # Invariant tests
+  test_failure_modes.py       # Failure mode detection tests
+  test_compile_checkpoint.py  # torch.compile + checkpoint round-trip tests
 
 experiments/
   failure_modes.py        # 6 injection experiments with measurements
+  scaling.py              # Grad accumulation sweep with cost tracking
 
 profiling/
   profile_attention.py    # FlashAttention vs naive across sequence lengths
@@ -182,6 +186,7 @@ docs/
   attention_walkthrough.md        # 8-step derivation of causal self-attention
   failure_modes.md                # Full failure mode analysis
   transformer_scaling_analysis.md # A100 profiling results
+  training_cost_analysis.md       # Real GPU benchmark numbers, scaling efficiency
 ```
 
 ---
@@ -215,8 +220,17 @@ python train_tiny.py
 # Tokenize FineWeb-Edu (requires CUDA)
 python fineweb.py
 
+# Fault tolerance demo (CPU, ~10s)
+python train_fault_demo.py
+
+# Grad accumulation scaling sweep (CPU)
+python experiments/scaling.py
+
 # Distributed training
 torchrun --standalone --nproc_per_node=8 train.py
+
+# With step limit and cost tracking
+MAX_STEPS=2000 GPU_COST_PER_HR=5.99 torchrun --standalone --nproc_per_node=4 train.py
 ```
 
 ---
@@ -226,8 +240,7 @@ torchrun --standalone --nproc_per_node=8 train.py
 - `attention.py` uses manual masking, not `F.scaled_dot_product_attention`. Kept for transparency; not suitable for production training.
 - No KV cache. Inference recomputes keys and values for all previous tokens at each step: O(n²) in sequence length.
 - No inference utilities. No batched generation, sampling strategies, or beam search.
-- `train.py` checkpoints at end of training only. No mid-run recovery.
-- FineWeb run completed with no HellaSwag eval instrumented. Loss curves exist but no downstream benchmark numbers.
+- No HellaSwag eval instrumented. Loss curves exist but no downstream benchmark numbers.
 
 ---
 
