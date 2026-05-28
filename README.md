@@ -29,6 +29,30 @@ Per-layer cost falls as depth increases. Kernel launch overhead is amortized acr
 
 ---
 
+## GPU benchmarks
+
+Measured on RunPod A100 SXM 80GB. GPT-2 124M, FineWeb-Edu 10B, bfloat16, `torch.compile`.
+
+| Config | Tokens/sec | TFLOPs/GPU | Cost/1B tokens | MFU |
+|--------|-----------|------------|----------------|-----|
+| 1× A100 ($1.52/hr) | 132,058 | 112.9 | $3.20 | 36% |
+| 4× A100 ($5.99/hr) | 517,857 | 110.7 | $3.21 | 35% |
+
+4× A100 delivers **3.92× throughput** (98% linear scaling via NVLink). Cost/1B tokens is hardware-count invariant — more GPUs buys wall-clock time, not cost efficiency. Full analysis in `docs/training_cost_analysis.md`.
+
+---
+
+## Fault-tolerant training
+
+`train.py` checkpoints every N steps and recovers from NaN gradients without restarting the run.
+
+- Checkpoint saved every 500 steps (configurable via `CHECKPOINT_INTERVAL`), keeps last 5
+- NaN detected post-accumulation via `check_anomaly`; rolls back to latest checkpoint, halves LR, continues
+- Resume from checkpoint on restart — data loader position saved and restored
+- Demonstrated end-to-end in `train_fault_demo.py`: NaN injected at step 80, rollback to step 80, training continues with halved LR
+
+---
+
 ## Training reliability
 
 Live monitors attached to the training loop that fire during a run, not after. No diagnosing by eyeballing loss curves.
