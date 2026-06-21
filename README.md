@@ -155,6 +155,16 @@ train_baseline.py         # Baseline training loop for reliability experiments (
 train_fault_demo.py       # CPU-runnable fault tolerance demo (NaN inject + rollback)
 train_tiny.py             # Single-GPU smoke test on input.txt
 fineweb.py                # FineWeb-Edu 10B tokenization and sharding
+sft.py                    # Supervised fine-tuning loop on Alpaca instruction data
+sft_data.py               # SFT prompt template, tokenizer, padding collator
+model_loader.py           # Shared model loaders for evals and SFT
+
+evals/
+  basic_eval.py           # HellaSwag log-likelihood multiple-choice scoring
+
+minbpe/
+  base.py                 # Tokenizer base class, get_stats, merge, save/load
+  tokenizer.py            # RegexTokenizer with GPT-2 and GPT-4 split patterns
 
 training_reliability/
   __init__.py             # Warning namedtuple
@@ -168,6 +178,9 @@ tests/
   test_transformer.py         # Invariant tests
   test_failure_modes.py       # Failure mode detection tests
   test_compile_checkpoint.py  # torch.compile + checkpoint round-trip tests
+  test_tokenizer.py           # minbpe round-trip, save/load, special tokens
+  test_sft_data.py            # SFT loss-masking, padding, EOS, truncation
+  test_sft_loop.py            # SFT loop wiring, LR warmup schedule
 
 experiments/
   failure_modes.py        # 6 injection experiments with measurements
@@ -187,6 +200,8 @@ docs/
   failure_modes.md                # Full failure mode analysis
   transformer_scaling_analysis.md # A100 profiling results
   training_cost_analysis.md       # Real GPU benchmark numbers, scaling efficiency
+  tokenization_edge_cases.md      # Bugs hit building minbpe and edge cases handled
+  sft_notes.md                    # SFT loss function, prompt template, failure modes
 ```
 
 ---
