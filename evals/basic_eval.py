@@ -125,7 +125,12 @@ def main():
     args = parser.parse_args()
 
     set_seed(args.seed)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
 
     if args.checkpoint:
         model, step = load_checkpoint(args.checkpoint, device)
