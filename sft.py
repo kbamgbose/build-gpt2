@@ -1,16 +1,7 @@
 """
-Supervised fine-tuning loop for nano-gpt on Alpaca-format instruction data.
-
-Loss is computed only on response tokens. Prompt and pad positions have label
-LOSS_IGNORE (-100) and contribute zero gradient. Standard next-token shift:
-logits[..., :-1] predicts labels[..., 1:].
-
-Run:
-    python sft.py --hf-pretrained gpt2
-    python sft.py --checkpoint checkpoints/ckpt_05000.pt --n-examples 1000
-
-Pre- and post-SFT holdout loss are reported; a HellaSwag delta is informative
-later (run evals/basic_eval.py on the saved checkpoint).
+SFT loop on Alpaca-format instruction data. Loss is masked over prompt and pad
+positions (label = LOSS_IGNORE); only response tokens contribute gradient.
+Standard next-token shift at loss time.
 """
 import argparse
 import json
@@ -42,7 +33,6 @@ def set_seed(seed: int) -> None:
 
 
 def make_lr_schedule(warmup_steps: int, base_lr: float):
-    """Linear warmup over `warmup_steps`, constant `base_lr` after."""
     def lr_at(step: int) -> float:
         if warmup_steps <= 0:
             return base_lr
@@ -79,7 +69,6 @@ def eval_loss(model, loader, device) -> float:
 
 @torch.no_grad()
 def generate(model, enc, instruction: str, device, max_new_tokens: int = 128):
-    """Greedy decode from format_prompt(instruction). Stops on EOS."""
     prompt = format_prompt(instruction)
     ids = enc.encode(prompt)
     x = torch.tensor([ids], dtype=torch.long, device=device)
@@ -128,10 +117,10 @@ def main():
     set_seed(args.seed)
     if args.device == "auto":
         if torch.cuda.is_available():
-             device = "cuda" 
+            device = "cuda"
         elif torch.backends.mps.is_available():
             device = "mps"
-        else: 
+        else:
             device = "cpu"
     else:
         device = args.device

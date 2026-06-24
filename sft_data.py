@@ -1,12 +1,8 @@
 """
-SFT data pipeline: Alpaca loader, prompt formatter, tokenizer + padding collator.
-
-Core invariant: cross-entropy loss is computed only on response tokens.
-Prompt and padding positions have label = LOSS_IGNORE (-100) and contribute zero
-gradient under torch.nn.functional.cross_entropy(ignore_index=-100).
-
-Single source of truth for the prompt template (format_prompt). Training and
-inference both call it to avoid template drift.
+SFT data pipeline. Core invariant: prompt and pad positions get
+LOSS_IGNORE labels so cross-entropy(ignore_index=-100) skips them.
+format_prompt is the single source of truth for the template — import,
+never duplicate, or train/eval drift silently.
 """
 from typing import List, Optional, Tuple, Dict
 
@@ -33,26 +29,20 @@ PROMPT_NO_INPUT = (
 
 
 def format_prompt(instruction: str, input: Optional[str] = None) -> str:
-    """Return the Alpaca-formatted prompt ending in '### Response:\\n'."""
     if input and input.strip():
         return PROMPT_WITH_INPUT.format(instruction=instruction, input=input)
     return PROMPT_NO_INPUT.format(instruction=instruction)
 
 
 def format_full(instruction: str, input: Optional[str], output: str) -> Tuple[str, str]:
-    """Return (prompt_str, response_str). EOS is added later, in tokenize_example."""
+    # EOS is appended in tokenize_example, not here.
     return format_prompt(instruction, input), output
 
 
 def tokenize_example(enc, prompt_str: str, response_str: str, block_size: int) -> Dict[str, List[int]]:
     """
-    Tokenize prompt + response into input_ids and labels with prompt masked.
-
-    Each half is encoded independently and concatenated, so prompt token ids
-    are stable across different responses. EOS is appended to the response.
-
-    Truncates prompt from the left if the total exceeds block_size, preserving
-    every response token. Raises ValueError if the response alone is too long.
+    Left-truncates the prompt to preserve every response token; raises if the
+    response alone exceeds block_size (rejecting silent zero-loss examples).
     """
     prompt_ids = enc.encode(prompt_str)
     response_ids = enc.encode(response_str) + [EOS_ID]
@@ -73,11 +63,7 @@ def tokenize_example(enc, prompt_str: str, response_str: str, block_size: int) -
 
 
 def pad_batch(examples: List[Dict[str, List[int]]], pad_id: int = EOS_ID) -> Dict[str, torch.Tensor]:
-    """
-    Right-pad to the longest example in the batch. Pad positions get label
-    LOSS_IGNORE and attention_mask = 0. pad_id defaults to EOS but those
-    positions are masked out, so the value is never gradient-relevant.
-    """
+    # pad_id defaults to EOS but pad positions are masked, so the value never reaches the loss.
     max_len = max(len(ex["input_ids"]) for ex in examples)
     B = len(examples)
     input_ids      = torch.full((B, max_len), pad_id,      dtype=torch.long)
@@ -92,7 +78,6 @@ def pad_batch(examples: List[Dict[str, List[int]]], pad_id: int = EOS_ID) -> Dic
 
 
 def load_alpaca_subset(n: int = 1000, seed: int = 1337) -> List[Dict[str, str]]:
-    """Load n examples from tatsu-lab/alpaca after a seeded shuffle."""
     from datasets import load_dataset
     ds = load_dataset("tatsu-lab/alpaca", split="train")
     ds = ds.shuffle(seed=seed).select(range(min(n, len(ds))))
