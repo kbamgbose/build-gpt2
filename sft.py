@@ -177,6 +177,10 @@ def main():
     print(f"pre-SFT holdout loss: {initial_holdout:.4f}")
     print()
 
+    os.makedirs(args.out_dir, exist_ok=True)
+    best_path = os.path.join(args.out_dir, f"sft_{timestamp}_best.pt")
+    best_holdout = float("inf")
+
     step = 0
     t0 = time.time()
     for epoch in range(args.epochs):
@@ -222,6 +226,11 @@ def main():
                 print(f"  [eval @ step {step}] holdout loss: {hv:.4f}")
                 with open(log_path, "a") as f:
                     f.write(json.dumps({"step": step, "holdout_loss": hv}) + "\n")
+                if hv < best_holdout:
+                    best_holdout = hv
+                    torch.save({"step": step, "model": model.state_dict(),
+                                "loss": hv, "config": model.config,
+                                "sft_config": vars(args)}, best_path)
 
             step += 1
 
@@ -246,6 +255,8 @@ def main():
     }, ckpt_path)
     torch.load(ckpt_path, map_location="cpu", weights_only=False)
     print(f"checkpoint: {ckpt_path}")
+    if best_holdout < float("inf"):
+        print(f"best-by-holdout: {best_path} (holdout loss {best_holdout:.4f})")
 
     SAMPLE_PROMPTS = [
         "List three colors of the rainbow.",

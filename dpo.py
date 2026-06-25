@@ -200,6 +200,10 @@ def main():
     print(f"pre-DPO holdout: loss={initial_eval['loss']:.4f}  margin={initial_eval['reward_margin']:+.4f}  acc={initial_eval['reward_accuracy']:.3f}")
     print()
 
+    os.makedirs(args.out_dir, exist_ok=True)
+    best_path = os.path.join(args.out_dir, f"dpo_{timestamp}_best.pt")
+    best_holdout = float("inf")
+
     effective_step = 0
     accum_count    = 0
     accum_loss     = 0.0
@@ -269,6 +273,11 @@ def main():
                 print(f"  [eval @ step {effective_step}] loss={hv['loss']:.4f}  margin={hv['reward_margin']:+.4f}  acc={hv['reward_accuracy']:.3f}")
                 with open(log_path, "a") as f:
                     f.write(json.dumps({"step": effective_step, "holdout": hv}) + "\n")
+                if hv["loss"] < best_holdout:
+                    best_holdout = hv["loss"]
+                    torch.save({"step": effective_step, "model": policy.state_dict(),
+                                "loss": hv["loss"], "config": policy.config,
+                                "dpo_config": vars(args)}, best_path)
 
             effective_step += 1
             accum_count = 0
@@ -296,6 +305,8 @@ def main():
     }, ckpt_path)
     torch.load(ckpt_path, map_location="cpu", weights_only=False)
     print(f"checkpoint: {ckpt_path}")
+    if best_holdout < float("inf"):
+        print(f"best-by-holdout: {best_path} (holdout loss {best_holdout:.4f})")
 
     SAMPLE_PROMPTS = [
         "List three colors of the rainbow.",
