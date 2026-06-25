@@ -157,6 +157,8 @@ train_tiny.py             # Single-GPU smoke test on input.txt
 fineweb.py                # FineWeb-Edu 10B tokenization and sharding
 sft.py                    # Supervised fine-tuning loop on Alpaca instruction data
 sft_data.py               # SFT prompt template, tokenizer, padding collator
+dpo.py                    # DPO loop with frozen reference and reward metrics
+dpo_data.py               # DPO pair tokenizer with completion-only mask
 model_loader.py           # Shared model loaders for evals and SFT
 
 evals/
@@ -181,6 +183,9 @@ tests/
   test_tokenizer.py           # minbpe round-trip, save/load, special tokens
   test_sft_data.py            # SFT loss-masking, padding, EOS, truncation
   test_sft_loop.py            # SFT loop wiring, LR warmup schedule
+  test_dpo_data.py            # DPO completion mask, shared prompt prefix, EOS symmetry
+  test_dpo_loss.py            # DPO loss sign, tie behavior, beta scaling
+  test_dpo_loop.py            # Frozen reference, init margins, tiny overfit, manual-sum parity
 
 experiments/
   failure_modes.py        # 6 injection experiments with measurements
@@ -202,6 +207,7 @@ docs/
   training_cost_analysis.md       # Real GPU benchmark numbers, scaling efficiency
   tokenization_edge_cases.md      # Bugs hit building minbpe and edge cases handled
   sft_notes.md                    # SFT loss function, prompt template, failure modes
+  dpo_notes.md                    # DPO loss, reference handling, reward metrics, failure modes
 ```
 
 ---

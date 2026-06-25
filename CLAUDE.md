@@ -12,6 +12,8 @@ GPT-2 built from scratch — transformer architecture, distributed training (DDP
 | `train_tiny.py` | Fast sanity loop (no dataset required) |
 | `sft.py` | Supervised fine-tuning loop on Alpaca-format instruction data |
 | `sft_data.py` | SFT prompt template, tokenizer, padding collator with `-100` masking |
+| `dpo.py` | DPO loop with frozen reference, beta-scaled preference loss, reward metrics |
+| `dpo_data.py` | DPO pair tokenizer with completion-only mask, Intel/orca_dpo_pairs loader |
 | `model_loader.py` | Shared model loaders for evals and SFT (HF GPT-2 and local checkpoints) |
 | `evals/` | Eval harnesses (currently `basic_eval.py`: HellaSwag multiple-choice) |
 | `minbpe/` | Minimal regex BPE tokenizer (teaching artifact, not wired into training) |
