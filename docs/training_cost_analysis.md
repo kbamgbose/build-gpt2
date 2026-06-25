@@ -33,17 +33,34 @@ Measured on RunPod A100 SXM 80GB pods. Model: GPT-2 124M, trained on FineWeb-Edu
 
 ---
 
-## Full Training Cost Projections
+## Dataset-Size Cost and Wall Time
 
-At steady-state $3.20/1B tokens and FineWeb-Edu 10B tokens:
+Extrapolated from the measured $3.20/1B tokens and the throughput numbers above. Cost is hardware-count invariant; GPU count only buys time.
 
-| Config | Est. total cost | Est. wall time |
-|---|---|---|
-| 1× A100 ($1.52/hr) | ~$32 | ~22 hr |
-| 4× A100 ($5.99/hr) | ~$32 | ~5.5 hr |
-| 8× A100 (~$12/hr) | ~$32 | ~2.7 hr |
+| Tokens | 1× A100 wall time | 4× A100 wall time | 8× A100 wall time | Total cost |
+|---|---|---|---|---|
+| 1B   | 2.1 hr   | 32 min   | 16 min   | $3.20 |
+| 2.5B (Chinchilla-optimal for 124M) | 5.3 hr  | 1.3 hr  | 40 min | $8.00 |
+| 10B (FineWeb-Edu, 4× over-trained) | 21 hr   | 5.4 hr  | 2.7 hr | $32 |
+| 100B | 8.7 days | 53 hr   | 27 hr  | $320 |
+| 300B (GPT-3-class token budget) | 26 days | 6.7 days | 3.4 days | $960 |
 
-Cost is constant across GPU counts. GPU count only buys time.
+### Chinchilla-optimal point
+
+Hoffmann et al. (2022) showed that compute-optimal training uses ~20 tokens per parameter. For 124M parameters this is ~2.5B tokens. Past that, loss continues to drop but with sharply diminishing returns per dollar.
+
+The nano-gpt FineWeb-Edu 10B run trains 4× past Chinchilla-optimal. This is the standard "over-train small models so inference is cheap and easy to deploy" pattern (Llama-2 7B was trained on 2T tokens, ~30× past Chinchilla-optimal for 7B).
+
+If the goal is the lowest-loss model for a fixed budget, the right question is usually "bigger model, fewer tokens" rather than "small model, more tokens." That tradeoff curve is not measured here; it requires sweeping model size, which is partially covered in `transformer_scaling_analysis.md`.
+
+### Assumptions
+
+- 124M GPT-2 (`n_layer=12, n_head=12, n_embd=768`), B=16, T=1024, bfloat16, `torch.compile`.
+- Steady-state throughput: ~132k tokens/sec on 1× A100 SXM, ~518k on 4× A100. The 8× column is linear extrapolation from the 1×/4× pair (98% scaling efficiency observed at 4×), not directly measured.
+- Pricing is RunPod on-demand A100 SXM 80GB. Spot instances run ~30-50% cheaper at the cost of preemption.
+- The per-token cost is steady-state. Runs shorter than ~1B tokens pay a `torch.compile` warmup tax in the first 100-200 steps, so real cost on a 1B run is ~5-10% higher than the table suggests.
+- Multi-GPU scaling at 8× assumes NVLink topology comparable to 4× A100 SXM. PCIe-attached A100s would not hit 98% efficiency.
+- Loss trajectory is not measured here. Published nano-gpt reproductions land around 3.0-3.1 train loss at 10B tokens on FineWeb-Edu.
 
 ---
 
