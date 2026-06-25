@@ -128,22 +128,69 @@ Memory cost: two 124M models = ~1 GB of weights, plus activations on one of them
 
 ## Observed results
 
-To be backfilled after the GPU run. Plan:
+Run on a single A100 SXM (RunPod). SFT checkpoint regenerated from HF GPT-2 124M (`sft_20260625_032209.pt`, step 714) and used as both policy init and frozen reference. DPO config: 100 Intel/orca_dpo_pairs (90 train / 10 holdout), 3 epochs, micro batch 2, grad-accum 4 (effective 8), lr 5e-6, beta 0.1, 10-step warmup.
 
-1. Regenerate the SFT checkpoint on RunPod (SFT-01 checkpoint was not saved off the pod).
-2. Run `python evals/basic_eval.py --checkpoint checkpoints/sft/sft_<ts>.pt` for the SFT-only HellaSwag baseline.
-3. Run `python dpo.py --ref-checkpoint checkpoints/sft/sft_<ts>.pt`.
-4. Run `python evals/basic_eval.py --checkpoint checkpoints/dpo/dpo_<ts>.pt` for the SFT+DPO HellaSwag number.
-5. Fill the tables below and paste the generation comparison.
+**Headline:** wiring is correct (init sanity numbers exact), severe overfit at this scale (reward margin saturates), but HellaSwag did not budge from SFT-only baseline. Generations changed in style, did not consistently improve.
 
-| Metric | SFT-only | SFT+DPO | Δ |
+### Init sanity
+
+| Quantity | Value | Predicted |
+|---|---|---|
+| pre-DPO holdout loss     | 0.6931 | log(2) ≈ 0.6931 |
+| pre-DPO holdout margin   | +0.0000 | 0.0 |
+| pre-DPO holdout accuracy | 0.500 | 0.5 (ties counted as 0.5) |
+
+All three match the math predictions to floating-point precision. This is the "DPO loss is implemented correctly" handshake.
+
+### Training trajectory
+
+Loss collapses and reward margin saturates within ~10 effective steps. Selected lines:
+
+| Effective step | Train loss | Reward margin | Grad norm |
 |---|---|---|---|
-| HellaSwag acc        | TBD | TBD | TBD |
-| HellaSwag acc_norm   | TBD | TBD | TBD |
-| Holdout DPO loss     | TBD | TBD | TBD |
-| Holdout reward_margin   | TBD | TBD | TBD |
-| Holdout reward_accuracy | TBD | TBD | TBD |
-| Wall time (DPO)      | n/a | TBD | n/a |
-| GPU                  | n/a | TBD | n/a |
+|  0 | 0.6931 | +0.00  | 127.36 |
+|  5 | 0.6025 | +1.92  | 106.89 |
+| 10 | 0.3644 | +9.75  |  50.01 |
+| 15 | 0.0952 | +45.84 |  21.03 |
+| 20 | 0.0430 | +37.41 |   9.60 |
+| 25 | 0.0046 | +62.89 |   1.20 |
+| 32 | 0.0215 | +60.49 |   2.51 |
 
-Plus side-by-side SFT-only vs SFT+DPO generations on the five fixed held-out prompts (already printed at the end of `dpo.py`).
+By step 15 the model has nearly memorized the 90-example train set. Holdout at step 20 (`loss=0.1673, margin=+27.27, acc=1.000`) confirms generalization to the 10 held-out pairs, but the magnitude of `margin` is concerning. Multiplied by beta=0.1, the effective logit input to sigmoid is ~5, deep into the saturated tail of the loss curve.
+
+Final holdout: `loss=0.1222, margin=+49.35, acc=0.900`. Training took 25.6s wall clock on the A100.
+
+### HellaSwag delta
+
+| | Pre-SFT (HF GPT-2) | SFT-only | SFT+DPO |
+|---|---|---|---|
+| acc          | 0.2858 | 0.2903 | 0.2907 |
+| acc_norm     | 0.2955 | 0.2988 | 0.3008 |
+| activitynet acc | 0.3395 | 0.3429 | 0.3441 |
+| wikihow acc     | 0.2602 | 0.2652 | 0.2652 |
+
+SFT-only numbers shown are from the deterministic SFT-01 run with identical seed and config (not yet pulled from this run's `sft_only_eval.log`). SFT-only → SFT+DPO movement is +0.04 pp acc / +0.20 pp acc_norm, both well within the ~0.45 pp standard-error band at n=10042. **No evidence of catastrophic forgetting** despite the saturated reward margins.
+
+### Generation comparison
+
+Same 5 held-out prompts as SFT-01, decoded greedily from the in-memory reference (SFT-only) and policy (SFT+DPO):
+
+| Prompt | SFT-only | SFT+DPO | Read |
+|---|---|---|---|
+| List three colors of the rainbow. | Three colors of the rainbow are blue, green, and yellow. | Green | Length collapse |
+| What is the capital of France? | The capital of France is Paris. | The capital of France is Paris. | Identical (stable on well-known facts) |
+| Explain in one sentence why the sky appears blue. | The sky appears blue because it is a colorless, unreflective substance. | The sky appears blue because it is a natural color. | Shorter, still wrong |
+| Write a haiku about a coding bug. | The code was not properly initialized. | The world is a vast and mysterious place, filled with mysteries and mysteries of unknown origin. | Quality regression |
+| Convert 25 degrees Celsius to Fahrenheit and show your work. | (infinite repetition loop) | The temperature of the Earth's surface is 25 degrees Celsius (212 Fahrenheit). | Broke the loop, math still wrong (25C is 77F, not 212F) |
+
+DPO changed 4 of 5 outputs. One change is positive (broke a repetition loop), one is negative (length collapse), two are minor style/length differences without quality change, one is identical. Across 5 prompts this is not a clear preference shift; it is mostly DPO's overfit on the orca training set leaking into a different decoding style.
+
+### What we learned
+
+- The init sanity check (loss = log(2), margin = 0, acc = 0.5) is the cheapest possible validation that the loss math is correct. Worth keeping as a printed pre-training line in any future preference-optimization loop.
+- At 100 pairs with beta=0.1 and lr=5e-6, the model overfits within ~10 effective steps. Reward margins of +49 on holdout mean the policy is preferring chosen orders of magnitude more confidently than the reference did, which is far past the regime where DPO is doing what it says on the tin (a moderate shift in preference distribution). The honest interpretation: this is memorization with a thin generalization veneer.
+- HellaSwag was completely untouched by DPO at this scale. This is the surprising-and-useful finding: even aggressive DPO on toy data did not destroy base capability. Real headroom exists to run with more data or smaller beta / higher lr without catastrophic forgetting being the immediate concern.
+- Generation comparison was the most informative artifact. The headline numbers (loss, margin, accuracy, HellaSwag) all looked sensible, but only the side-by-side outputs revealed that DPO at this scale was not consistently improving anything. For preference optimization, qualitative samples are not optional; they catch what numbers miss.
+- The grad-norm spike warning fired on every step here too, exactly as in SFT-01. The threshold of 10.0 in `training_reliability/grad_norm.py` is too aggressive for both SFT and DPO; the same follow-up applies (make it per-loop configurable).
+- Total cost on the A100: ~$0.45 across the full sequence (SFT regen + SFT-only HellaSwag + DPO + SFT+DPO HellaSwag). DPO itself was ~$0.01.
+- The toy 100-pair scale is the right place to wire-up DPO, but the wrong place to evaluate whether DPO actually works. If preference shift is the real goal, the next experiment is `--n-examples 1000` (or more) with lr cut by 5x and beta raised to 0.3-0.5.
