@@ -134,6 +134,7 @@ def main():
     p.add_argument("--block-size",       type=int,   default=1024)
     p.add_argument("--weight-decay",     type=float, default=0.1)
     p.add_argument("--grad-clip",        type=float, default=1.0)
+    p.add_argument("--grad-norm-warn-threshold", type=float, default=25.0)
     p.add_argument("--holdout-frac",     type=float, default=0.1)
     p.add_argument("--eval-every",       type=int,   default=20)
     p.add_argument("--log-every",        type=int,   default=1)
@@ -249,7 +250,7 @@ def main():
             warnings = []
             if w := check_anomaly(effective_step, mean_loss, grad_norm):
                 warnings.append(w.message)
-            if w := check_grad_norm(effective_step, grad_norm):
+            if w := check_grad_norm(effective_step, grad_norm, threshold=args.grad_norm_warn_threshold):
                 warnings.append(w.message)
 
             record = {
