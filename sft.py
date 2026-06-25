@@ -238,7 +238,6 @@ def main():
     torch.save({
         "step":                 step,
         "model":                model.state_dict(),
-        "optimizer":            optimizer.state_dict(),
         "loss":                 final_holdout,
         "config":               model.config,
         "sft_config":           vars(args),

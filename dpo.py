@@ -288,7 +288,6 @@ def main():
     torch.save({
         "step":         effective_step,
         "model":        policy.state_dict(),
-        "optimizer":    optimizer.state_dict(),
         "loss":         final_eval["loss"],
         "config":       policy.config,
         "dpo_config":   vars(args),
