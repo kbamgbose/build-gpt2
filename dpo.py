@@ -295,6 +295,7 @@ def main():
         "initial_eval": initial_eval,
         "final_eval":   final_eval,
     }, ckpt_path)
+    torch.load(ckpt_path, map_location="cpu", weights_only=False)
     print(f"checkpoint: {ckpt_path}")
 
     SAMPLE_PROMPTS = [

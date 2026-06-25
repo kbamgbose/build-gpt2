@@ -245,6 +245,7 @@ def main():
         "initial_holdout_loss": initial_holdout,
         "final_holdout_loss":   final_holdout,
     }, ckpt_path)
+    torch.load(ckpt_path, map_location="cpu", weights_only=False)
     print(f"checkpoint: {ckpt_path}")
 
     SAMPLE_PROMPTS = [
